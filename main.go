@@ -32,14 +32,16 @@ func findInstance(instanceName *string) (*string, error) {
 		},
 	})
 
+	// Notice how else's can be dropped
+
 	if len(instancesOutput.Reservations) == 0 {
 		return nil, fmt.Errorf("⛔ no running instances found by tag '%s' in this region️", instanceName)
-	} else if len(instancesOutput.Reservations) > 1 {
-		return nil, fmt.Errorf("⛔ more than one running instance found by tag '%s' in this region", instanceName)
-	} else {
-		fmt.Println(fmt.Sprintf("✅ found ec2 instance %s...", *instancesOutput.Reservations[0].Instances[0].InstanceId))
-		return instancesOutput.Reservations[0].Instances[0].PublicDnsName, err
 	}
+	if len(instancesOutput.Reservations) > 1 {
+		return nil, fmt.Errorf("⛔ more than one running instance found by tag '%s' in this region", instanceName)
+	}
+	fmt.Println(fmt.Sprintf("✅ found ec2 instance %s...", *instancesOutput.Reservations[0].Instances[0].InstanceId))
+	return instancesOutput.Reservations[0].Instances[0].PublicDnsName, err
 }
 
 func findHostedZoneId(domain *string) (*string, error) {
@@ -58,19 +60,21 @@ func findHostedZoneId(domain *string) (*string, error) {
 	output, err := route53Client.ListHostedZonesByName(&route53.ListHostedZonesByNameInput{
 		DNSName: &domainString,
 	})
+	if err != nil {
+		return nil, err
+	}
 
 	if len(output.HostedZones) == 0 {
 		return nil, fmt.Errorf("⛔ unable to find hosted zone: '%s'", domainString)
-	} else {
-		idPath := output.HostedZones[0].Id
-
-		// Strip the extraneous name space in the ID
-		id := strings.Split(*idPath, "/hostedzone/")
-		hostedZoneId := id[1]
-
-		fmt.Println(fmt.Sprintf("✅ found hosted zone %s", hostedZoneId))
-		return &hostedZoneId, err
 	}
+	idPath := output.HostedZones[0].Id
+
+	// Strip the extraneous name space in the ID
+	id := strings.Split(*idPath, "/hostedzone/")
+	hostedZoneId := id[1]
+
+	fmt.Println(fmt.Sprintf("✅ found hosted zone %s", hostedZoneId))
+	return &hostedZoneId, nil
 }
 
 func changeRecordSet(hostedZoneId *string, targetRecord *string, dnsName *string) error {
@@ -97,12 +101,14 @@ func changeRecordSet(hostedZoneId *string, targetRecord *string, dnsName *string
 			},
 		},
 	})
+	if err != nil {
+		return err
+	}
 
 	fmt.Println("⏳ change submitted, awaiting propagation...")
-	err = route53Client.WaitUntilResourceRecordSetsChanged(&route53.GetChangeInput{
+	return route53Client.WaitUntilResourceRecordSetsChanged(&route53.GetChangeInput{
 		Id: changeResourceRecordSetOutput.ChangeInfo.Id,
 	})
-	return err
 }
 
 func main() {
@@ -119,41 +125,34 @@ func main() {
 		Help:     "the route53 resource you'd like to update to point to an ec2 instance",
 	})
 
-	err := parser.Parse(os.Args)
-
-	if err != nil {
+	// Using a go-idiomic one-liner conditional construct
+	if err := parser.Parse(os.Args); err != nil {
 		// Print usage if arguments are missing.
 		fmt.Print(parser.Usage(err))
-	} else {
-
-		// Create an AWS Session using the user or system's shared config.
-		sess = session.Must(session.NewSessionWithOptions(session.Options{
-			SharedConfigState: session.SharedConfigEnable,
-		}))
-
-		domainName := strings.SplitAfterN(*targetRecord, ".", 2)
-		hostedZoneId, err := findHostedZoneId(&domainName[1])
-
-		if err != nil {
-			fmt.Println(err.Error())
-			os.Exit(1)
-		} else {
-			dnsName, err := findInstance(instanceName)
-
-			if err != nil {
-				fmt.Println(err.Error())
-				os.Exit(1)
-			} else {
-				err := changeRecordSet(hostedZoneId, targetRecord, dnsName)
-
-				if err != nil {
-					fmt.Println(err.Error())
-					os.Exit(1)
-				} else {
-					fmt.Println("🆒 ㊗️ mission successful")
-					os.Exit(0)
-				}
-			}
-		}
+		os.Exit(1)
 	}
+
+	// Create an AWS Session using the user or system's shared config.
+	sess = session.Must(session.NewSessionWithOptions(session.Options{
+		SharedConfigState: session.SharedConfigEnable,
+	}))
+
+	domainName := strings.SplitAfterN(*targetRecord, ".", 2)
+	hostedZoneId, err := findHostedZoneId(&domainName[1])
+	if err != nil {
+		fmt.Println(err.Error())
+		os.Exit(1)
+	}
+	dnsName, err := findInstance(instanceName)
+
+	if err != nil {
+		fmt.Println(err.Error())
+		os.Exit(1)
+	}
+	if err := changeRecordSet(hostedZoneId, targetRecord, dnsName); err != nil {
+		fmt.Println(err.Error())
+		os.Exit(1)
+	}
+	fmt.Println("🆒 ㊗️ mission successful")
+	os.Exit(0)
 }
