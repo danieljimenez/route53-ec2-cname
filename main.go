@@ -16,7 +16,7 @@ var sess *session.Session
 func findInstance(instanceName *string) (*string, error) {
 	ec2Client := ec2.New(sess)
 
-	fmt.Println(fmt.Sprintf("⏳ looking for ec2 instance tagged '%s'...", *instanceName))
+	fmt.Println(fmt.Sprintf("⏳ looking for ec2 instance tagged '%s'", *instanceName))
 	instancesOutput, err := ec2Client.DescribeInstances(&ec2.DescribeInstancesInput{
 		Filters: []*ec2.Filter{
 			{
@@ -32,15 +32,15 @@ func findInstance(instanceName *string) (*string, error) {
 		},
 	})
 
-	// Notice how else's can be dropped
-
 	if len(instancesOutput.Reservations) == 0 {
-		return nil, fmt.Errorf("⛔ no running instances found by tag '%s' in this region️", instanceName)
+		return nil, fmt.Errorf("⛔ no running instances found by tag '%s' in this region", instanceName)
 	}
+
 	if len(instancesOutput.Reservations) > 1 {
 		return nil, fmt.Errorf("⛔ more than one running instance found by tag '%s' in this region", instanceName)
 	}
-	fmt.Println(fmt.Sprintf("✅ found ec2 instance %s...", *instancesOutput.Reservations[0].Instances[0].InstanceId))
+
+	fmt.Println(fmt.Sprintf("✅ found ec2 instance '%s'", *instancesOutput.Reservations[0].Instances[0].InstanceId))
 	return instancesOutput.Reservations[0].Instances[0].PublicDnsName, err
 }
 
@@ -56,7 +56,7 @@ func findHostedZoneId(domain *string) (*string, error) {
 	// List all the zones, with the closest matching one in the 0 position.
 	route53Client := route53.New(sess)
 
-	fmt.Println(fmt.Sprintf("⏳ looking for hosted zone '%s'...", domainString))
+	fmt.Println(fmt.Sprintf("⏳ looking for hosted zone '%s'", domainString))
 	output, err := route53Client.ListHostedZonesByName(&route53.ListHostedZonesByNameInput{
 		DNSName: &domainString,
 	})
@@ -67,20 +67,22 @@ func findHostedZoneId(domain *string) (*string, error) {
 	if len(output.HostedZones) == 0 {
 		return nil, fmt.Errorf("⛔ unable to find hosted zone: '%s'", domainString)
 	}
+
+	// Grab the first hosted zone's ID.
 	idPath := output.HostedZones[0].Id
 
 	// Strip the extraneous name space in the ID
 	id := strings.Split(*idPath, "/hostedzone/")
 	hostedZoneId := id[1]
 
-	fmt.Println(fmt.Sprintf("✅ found hosted zone %s", hostedZoneId))
+	fmt.Println(fmt.Sprintf("✅ found hosted zone '%s'", hostedZoneId))
 	return &hostedZoneId, nil
 }
 
 func changeRecordSet(hostedZoneId *string, targetRecord *string, dnsName *string) error {
 	route53Client := route53.New(sess)
 
-	fmt.Println("⏳ submitting change...")
+	fmt.Println("⏳ submitting change")
 	changeResourceRecordSetOutput, err := route53Client.ChangeResourceRecordSets(&route53.ChangeResourceRecordSetsInput{
 		HostedZoneId: hostedZoneId,
 		ChangeBatch: &route53.ChangeBatch{
@@ -105,7 +107,7 @@ func changeRecordSet(hostedZoneId *string, targetRecord *string, dnsName *string
 		return err
 	}
 
-	fmt.Println("⏳ change submitted, awaiting propagation...")
+	fmt.Println("⏳ change submitted, awaiting propagation")
 	return route53Client.WaitUntilResourceRecordSetsChanged(&route53.GetChangeInput{
 		Id: changeResourceRecordSetOutput.ChangeInfo.Id,
 	})
@@ -125,9 +127,8 @@ func main() {
 		Help:     "the route53 resource you'd like to update to point to an ec2 instance",
 	})
 
-	// Using a go-idiomic one-liner conditional construct
+	// Print usage if arguments are missing.
 	if err := parser.Parse(os.Args); err != nil {
-		// Print usage if arguments are missing.
 		fmt.Print(parser.Usage(err))
 		os.Exit(1)
 	}
@@ -153,6 +154,7 @@ func main() {
 		fmt.Println(err.Error())
 		os.Exit(1)
 	}
-	fmt.Println("🆒 ㊗️ mission successful")
+
+	fmt.Println(fmt.Sprintf("🆒 ㊗️ mission successful, set '%s' to '%s'", *targetRecord, *dnsName))
 	os.Exit(0)
 }
